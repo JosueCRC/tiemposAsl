@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login Vuetify + Firebase</title>
+
+  <link href="https://cdn.jsdelivr.net/npm/vuetify@3.7.1/dist/vuetify.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/@mdi/font/css/materialdesignicons.min.css" rel="stylesheet">
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.3.1/firebase-app.js";
+    import { 
+      getAuth, 
+      createUserWithEmailAndPassword, 
+      signInWithEmailAndPassword, 
+      GoogleAuthProvider, 
+      signInWithPopup,
+      sendPasswordResetEmail
+    } from "https://www.gstatic.com/firebasejs/11.3.1/firebase-auth.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCjxOwEW0k4arHU1w-1w209uFTe7lPQGL0",
+      authDomain: "tiemposasl-eb35d.firebaseapp.com",
+      projectId: "tiemposasl-eb35d",
+      storageBucket: "tiemposasl-eb35d.firebasestorage.app",
+      messagingSenderId: "905146086573",
+      appId: "1:905146086573:web:dd311a57834d3fae44c224",
+      measurementId: "G-9E7ERMVZLC"
+    };
+
+    const appFirebase = initializeApp(firebaseConfig);
+    window.auth = getAuth(appFirebase);
+    // Configurar Firebase Auth para usar el idioma del dispositivo
+    window.auth.useDeviceLanguage();
+    window.GoogleAuthProvider = GoogleAuthProvider;
+    window.signInWithPopup = signInWithPopup;
+    window.createUserWithEmailAndPassword = createUserWithEmailAndPassword;
+    window.signInWithEmailAndPassword = signInWithEmailAndPassword;
+    window.sendPasswordResetEmail = sendPasswordResetEmail;
+  </script>
+</head>
+<body>
+  <div id="app"></div>
+
+  <script src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/vuetify@3.7.1/dist/vuetify.min.js"></script>
+
+  <script type="module">
+    const { createApp, ref } = Vue
+    const { createVuetify } = Vuetify
+
+    const App = {
+      setup() {
+        const email = ref("")
+        const password = ref("")
+        const visible = ref(false)
+        const showRegister = ref(false)
+        const registerEmail = ref("")
+        const registerPassword = ref("")
+        const showReset = ref(false)
+        const resetEmail = ref("")
+        const snackbar = ref(false);
+        const snackbarText = ref("");
+        const snackbarColor = ref("info");
+
+        const showSnackbar = (text, color = "info") => {
+            snackbarText.value = text;
+            snackbarColor.value = color;
+            snackbar.value = true;
+        };
+
+        const login = async () => {
+          try {
+            const userCredential = await window.signInWithEmailAndPassword(window.auth, email.value, password.value);
+            const user = userCredential.user;
+            localStorage.setItem("username", user.email);
+            showSnackbar("Bienvenido " + user.email, "success");
+            setTimeout(() => {
+                window.location.href = "index.html";
+            }, 1500);
+          } catch (error) {
+            showSnackbar(error.message, "error");
+          }
+        };
+
+        const loginGoogle = async () => {
+          try {
+            const provider = new window.GoogleAuthProvider();
+            const result = await window.signInWithPopup(window.auth, provider);
+            const user = result.user;
+            localStorage.setItem("username", user.displayName);
+            showSnackbar("Bienvenido " + user.displayName, "success");
+            setTimeout(() => {
+                window.location.href = "index.html";
+            }, 1500);
+          } catch (error) {
+            showSnackbar(error.message, "error");
+          }
+        };
+
+        const register = async () => {
+          try {
+            await window.createUserWithEmailAndPassword(window.auth, registerEmail.value, registerPassword.value);
+            showSnackbar("Registro exitoso", "success");
+            showRegister.value = false;
+          } catch (error) {
+            showSnackbar(error.message, "error");
+          }
+        };
+
+        const resetPassword = async () => {
+          try {
+            await window.sendPasswordResetEmail(window.auth, resetEmail.value);
+            showSnackbar("Correo de restablecimiento enviado a " + resetEmail.value, "success");
+            showReset.value = false;
+          } catch (error) {
+            showSnackbar(error.message, "error");
+          }
+        };
+
+        return {
+          email, password, visible, login, loginGoogle,
+          showRegister, registerEmail, registerPassword, register,
+          showReset, resetEmail, resetPassword,
+          snackbar, snackbarText, snackbarColor
+        };
+      },
+      template: `
+        <v-app>
+          <v-main class="d-flex align-center justify-center min-vh-100 bg-light">
+            <div>
+              <v-img
+                class="mx-auto my-6"
+                max-width="228"
+                src="https://cdn.vuetifyjs.com/docs/images/logos/vuetify-logo-v3-slim-text-light.svg"
+              ></v-img>
+
+              <v-card
+                class="mx-auto pa-12 pb-8"
+                elevation="8"
+                max-width="448"
+                rounded="lg"
+              >
+                <div class="text-subtitle-1 text-medium-emphasis mb-2">Correo electrónico</div>
+
+                <v-text-field
+                  v-model="email"
+                  density="compact"
+                  placeholder="Email address"
+                  prepend-inner-icon="mdi-email-outline"
+                  variant="outlined"
+                ></v-text-field>
+
+                <div class="text-subtitle-1 text-medium-emphasis d-flex align-center justify-space-between mt-4">
+                  Contraseña
+                  <a class="text-caption text-decoration-none text-blue" href="#" @click.prevent="showReset = true">
+                    Forgot login password?
+                  </a>
+                </div>
+
+                <v-text-field
+                  v-model="password"
+                  :append-inner-icon="visible ? 'mdi-eye-off' : 'mdi-eye'"
+                  :type="visible ? 'text' : 'password'"
+                  density="compact"
+                  placeholder="Enter your password"
+                  prepend-inner-icon="mdi-lock-outline"
+                  variant="outlined"
+                  @click:append-inner="visible = !visible"
+                ></v-text-field>
+
+                <v-card class="mb-6" color="surface-variant" variant="tonal">
+                  <v-card-text class="text-medium-emphasis text-caption">
+                    Después de 3 intentos fallidos tu cuenta se bloqueará temporalmente.
+                  </v-card-text>
+                </v-card>
+
+                <v-btn class="mb-3" color="blue" size="large" variant="tonal" block @click="login">
+                  Log In
+                </v-btn>
+
+                <v-btn class="mb-6" color="red" size="large" block @click="loginGoogle">
+                  <v-icon start icon="mdi-google"></v-icon>
+                  Ingresar con Google
+                </v-btn>
+
+                <v-card-text class="text-center">
+                  <a class="text-blue text-decoration-none" href="#" @click.prevent="showRegister = true">
+                    Sign up now <v-icon icon="mdi-chevron-right"></v-icon>
+                  </a>
+                </v-card-text>
+              </v-card>
+
+              <v-dialog v-model="showRegister" max-width="400">
+                <v-card>
+                  <v-card-title>Registrar Cuenta</v-card-title>
+                  <v-card-text>
+                    <v-text-field v-model="registerEmail" label="Correo electrónico" prepend-inner-icon="mdi-email-outline"></v-text-field>
+                    <v-text-field v-model="registerPassword" label="Contraseña" prepend-inner-icon="mdi-lock-outline" type="password"></v-text-field>
+                  </v-card-text>
+                  <v-card-actions>
+                    <v-btn color="blue" @click="register">Registrar</v-btn>
+                    <v-btn color="grey" text @click="showRegister = false">Cancelar</v-btn>
+                  </v-card-actions>
+                </v-card>
+              </v-dialog>
+
+              <v-dialog v-model="showReset" max-width="400">
+                <v-card>
+                  <v-card-title>Restablecer Contraseña</v-card-title>
+                  <v-card-text>
+                    <v-text-field v-model="resetEmail" label="Correo electrónico" prepend-inner-icon="mdi-email-outline"></v-text-field>
+                  </v-card-text>
+                  <v-card-actions>
+                    <v-btn color="blue" @click="resetPassword">Enviar correo</v-btn>
+                    <v-btn color="grey" text @click="showReset = false">Cancelar</v-btn>
+                  </v-card-actions>
+                </v-card>
+              </v-dialog>
+            </div>
+          </v-main>
+          <v-snackbar
+            v-model="snackbar"
+            :color="snackbarColor"
+            :timeout="3000"
+            location="center"
+          >
+            {{ snackbarText }}
+            <template v-slot:actions>
+              <v-btn
+                color="white"
+                variant="text"
+                @click="snackbar = false"
+              >
+                Cerrar
+              </v-btn>
+            </template>
+          </v-snackbar>
+        </v-app>
+      `
+    }
+
+    const vuetify = createVuetify()
+    createApp(App).use(vuetify).mount('#app')
+  </script>
+</body>
+</html>
