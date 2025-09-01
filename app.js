@@ -35,13 +35,19 @@ const App = {
         const selectedDate = ref(null);
         const isEditMode = ref(false);
         const originalNum = ref(null);
+        
         const confirmSaveDialog = ref(false);
-        const numRecetaInput = ref(null);
+        const tiempoPreparacion = ref('N/A');
 
-        // Referencia para el diálogo arrastrable
+        const numRecetaInput = ref(null);
+        const hentraInput = ref(null);
+        const hdigitaInput = ref(null);
+        const hacopioInput = ref(null);
+        const hrevisaInput = ref(null);
+        const saveButton = ref(null);
+
         const dialogRef = ref(null);
 
-        // Variables para el diálogo de confirmación de eliminación
         const confirmDialog = ref(false);
         const recordToDelete = ref(null);
 
@@ -104,22 +110,18 @@ const App = {
             snackbarColor.value = color;
             snackbar.value = true;
         };
+        
+        // Nueva propiedad para el total general de recetas (sin filtro de mes/año)
+        const totalRecetasGeneral = computed(() => {
+            return records.value.length;
+        });
 
-        const totalesGlobales = computed(() => {
-            const totalRecetas = records.value.length;
-            const tiemposTotales = records.value
-                .filter(r => r.hentra && r.hrevisa)
-                .map(r => calculateMinutesDifference(r.hentra, r.hrevisa))
-                .filter(diff => diff >= 0);
-
-            const promedioGlobal = tiemposTotales.length > 0
-                ? Math.round(tiemposTotales.reduce((a, b) => a + b, 0) / tiemposTotales.length)
-                : 0;
-
-            return {
-                totalRecetas,
-                promedioGlobal: formatMinutesToHHMM(promedioGlobal)
-            };
+        // Nueva propiedad para el promedio general (sin filtro de mes/año)
+        const promedioRecetasGeneral = computed(() => {
+            const tiempos = records.value.filter(r => r.hentra && r.hrevisa).map(r => calculateMinutesDifference(r.hentra, r.hrevisa));
+            const total = tiempos.reduce((a, b) => a + b, 0);
+            const promedio = tiempos.length > 0 ? Math.round(total / tiempos.length) : 0;
+            return formatMinutesToHHMM(promedio);
         });
 
         const registrosFiltrados = computed(() => {
@@ -224,7 +226,7 @@ const App = {
             };
         });
 
-        const reporteCompleto = computed(() => {
+        const reporteTrimestral = computed(() => {
             const tipos = ['CONSULTA', 'EMERGENCIAS', 'COPIAS'];
             const data = { 'CONSULTA': {}, 'EMERGENCIAS': {}, 'COPIAS': {} };
             const months = [];
@@ -235,67 +237,54 @@ const App = {
 
             const getMonthName = (month) => meses.find(m => m.valor === month)?.nombre;
 
-            // Recolectar datos por mes para los últimos 3 meses
             for (let i = 0; i < 3; i++) {
                 let mes = (mesActual - i + 12) % 12;
                 let ano = anoActual;
                 if (mesActual - i < 0) {
                     ano--;
                 }
-                months.push({ mes, ano, label: i === 0 ? 'Mes Actual' : (i === 1 ? 'Anterior' : 'TrasAnterior') });
+                months.push({ mes, ano });
             }
             
-            // Inicializar la estructura de datos
             tipos.forEach(tipo => {
-                data[tipo].meses = {};
-                data[tipo].total = { cantidad: 0, tiempos: [] };
-                months.forEach(({ mes, ano, label }) => {
-                    data[tipo].meses[label] = { cantidad: 0, tiempos: [], nombreMes: getMonthName(mes) };
+                months.forEach(({ mes, ano }) => {
+                    const mesKey = `${mes}-${ano}`;
+                    data[tipo][mesKey] = { cantidad: 0, promedio: 0, nombreMes: getMonthName(mes) };
                 });
             });
 
-            // Llenar la estructura con los datos de los registros
             records.value.forEach(record => {
                 const d = parseDate(record.fecha);
                 if (!d) return;
 
                 const mes = d.getMonth();
                 const ano = d.getFullYear();
+                const mesKey = `${mes}-${ano}`;
                 const tipo = record.tipo;
 
-                if (record.hentra && record.hrevisa) {
-                    const diff = calculateMinutesDifference(record.hentra, record.hrevisa);
-                    if (diff >= 0) {
-                        // Agregar al total general
-                        data[tipo].total.tiempos.push(diff);
-                        data[tipo].total.cantidad++;
-
-                        // Agregar al mes correspondiente
-                        months.forEach(({ mes: m, ano: a, label }) => {
-                            if (mes === m && ano === a) {
-                                data[tipo].meses[label].cantidad++;
-                                data[tipo].meses[label].tiempos.push(diff);
+                if (data[tipo] && data[tipo][mesKey]) {
+                    data[tipo][mesKey].cantidad++;
+                    if (record.hentra && record.hrevisa) {
+                        const diff = calculateMinutesDifference(record.hentra, record.hrevisa);
+                        if (diff >= 0) {
+                            if (!data[tipo][mesKey].tiempos) {
+                                data[tipo][mesKey].tiempos = [];
                             }
-                        });
+                            data[tipo][mesKey].tiempos.push(diff);
+                        }
                     }
                 }
             });
 
-            // Calcular promedios finales
             tipos.forEach(tipo => {
-                // Promedio del total
-                const totalData = data[tipo].total;
-                totalData.promedio = totalData.tiempos.length > 0
-                    ? formatMinutesToHHMM(Math.round(totalData.tiempos.reduce((a, b) => a + b, 0) / totalData.tiempos.length))
-                    : '00:00';
-                delete totalData.tiempos;
-
-                // Promedios por mes
-                Object.keys(data[tipo].meses).forEach(mesLabel => {
-                    const mesData = data[tipo].meses[mesLabel];
-                    mesData.promedio = mesData.tiempos.length > 0
-                        ? formatMinutesToHHMM(Math.round(mesData.tiempos.reduce((a, b) => a + b, 0) / mesData.tiempos.length))
-                        : '00:00';
+                Object.keys(data[tipo]).forEach(mesKey => {
+                    const mesData = data[tipo][mesKey];
+                    if (mesData.tiempos && mesData.tiempos.length > 0) {
+                        const total = mesData.tiempos.reduce((a, b) => a + b, 0);
+                        mesData.promedio = formatMinutesToHHMM(Math.round(total / mesData.tiempos.length));
+                    } else {
+                        mesData.promedio = '00:00';
+                    }
                     delete mesData.tiempos;
                 });
             });
@@ -311,88 +300,39 @@ const App = {
 
             const doc = new jsPDF();
             const ebaisNombre = selectedLugar.value;
-            const reportData = reporteCompleto.value;
-            const globalTotals = totalesGlobales.value;
-            const tipos = {
-                'CONSULTA': 'Consulta Externa',
-                'EMERGENCIAS': 'Urgencias',
-                'COPIAS': 'Subsecuentes'
-            };
-
-            const tiposColores = {
-                'CONSULTA': [24, 103, 192], // #1867c0
-                'EMERGENCIAS': [22, 151, 246], // #1697f6
-                'COPIAS': [123, 198, 255], // #7bc6ff
-            };
-
+            const reportData = reporteTrimestral.value;
+            const tipos = ['CONSULTA', 'EMERGENCIAS', 'COPIAS'];
             let yPos = 20;
 
             doc.setFontSize(16);
-            doc.text(`Reporte de Tiempos - ${ebaisNombre}`, 105, yPos, { align: 'center' });
+            doc.text("Reporte de Tiempos Trimestral", 105, yPos, { align: 'center' });
             yPos += 10;
             doc.setFontSize(12);
-            doc.text(`Generado el: ${new Date().toLocaleDateString('es-ES')}`, 105, yPos, { align: 'center' });
+            doc.text(`Lugar de Atención: ${ebaisNombre}`, 105, yPos, { align: 'center' });
             yPos += 20;
 
-            // Sección de Totales Generales
-            doc.setFontSize(14);
-            doc.text('Totales Generales (Sin filtros de mes/año)', 105, yPos, { align: 'center' });
-            yPos += 5;
-            doc.autoTable({
-                startY: yPos,
-                head: [['Total Recetas', 'Promedio Global']],
-                body: [[globalTotals.totalRecetas, globalTotals.promedioGlobal]],
-                theme: 'striped',
-                styles: {
-                    fontSize: 10,
-                    halign: 'center'
-                },
-                headStyles: {
-                    fillColor: [0, 100, 200]
-                }
-            });
-            yPos = doc.autoTable.previous.finalY + 15;
-
-            // Sección de Totales por tipo de receta
-            Object.keys(tipos).forEach(tipoKey => {
-                const tipoLabel = tipos[tipoKey];
-                const headers = [['Mes', 'Cantidad Recetas', 'Promedio']];
+            tipos.forEach(tipo => {
+                const headers = [['Mes', 'Cantidad Recetas', 'Promedio (HH:MM)']];
                 const data = [];
+                const monthKeys = Object.keys(reportData[tipo]);
                 
-                // Agregar datos de los tres meses recientes
-                const mesesData = reportData[tipoKey].meses;
-                Object.keys(mesesData).forEach(mesLabel => {
-                    const row = mesesData[mesLabel];
-                    data.push([
-                        `${mesLabel.replace('Anterior', ' Anterior').replace('Tras', 'TrasAnterior').trim()} (${row.nombreMes.toLowerCase()})`,
-                        row.cantidad,
-                        row.promedio
-                    ]);
+                monthKeys.forEach(monthKey => {
+                    const row = reportData[tipo][monthKey];
+                    data.push([row.nombreMes.toUpperCase(), row.cantidad, row.promedio]);
                 });
 
-                // Agregar el total
-                const totalData = reportData[tipoKey].total;
-                data.push(['Total', totalData.cantidad, totalData.promedio]);
-
-                doc.setFontSize(14);
-                doc.text(tipoLabel, 20, yPos);
+                doc.text(tipo.toUpperCase(), 20, yPos);
                 yPos += 5;
-
                 doc.autoTable({
                     startY: yPos,
                     head: headers,
                     body: data,
-                    theme: 'striped',
                     styles: {
                         fontSize: 10,
                         halign: 'center'
                     },
                     headStyles: {
-                        fillColor: tiposColores[tipoKey]
-                    },
-                    didDrawPage: function (data) {
-                        // Pie de página con el número de página
-                        doc.text('Página ' + doc.internal.getNumberOfPages(), data.settings.margin.left, doc.internal.pageSize.height - 10);
+                        fillColor: [0, 100, 200]
                     }
                 });
                 yPos = doc.autoTable.previous.finalY + 15;
@@ -466,7 +406,7 @@ const App = {
             });
         };
         
-        const saveRecord = () => {
+        const saveRecord = async () => {
             const { hentra, hdigita, hacopio, hrevisa, num } = recordForm.value;
             if (!hentra || !hdigita || !hacopio || !hrevisa || !num || !recordForm.value.fecha) {
                 showSnackbar("Debes completar todas las horas, fecha y número de receta antes de guardar.", "warning");
@@ -498,6 +438,8 @@ const App = {
                 return;
             }
             
+            const diff = calculateMinutesDifference(recordForm.value.hentra, recordForm.value.hrevisa);
+            tiempoPreparacion.value = formatMinutesToHHMM(diff);
             confirmSaveDialog.value = true;
         };
 
@@ -534,7 +476,6 @@ const App = {
             }
             records.value.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
             confirmSaveDialog.value = false;
-            // Corregido: En lugar de resetear todo el formulario, solo limpiamos los campos necesarios
             recordForm.value.num = '';
             recordForm.value.hentra = '';
             recordForm.value.hdigita = '';
@@ -597,16 +538,65 @@ const App = {
             }
             dateDialog.value = false;
         };
-        
-        const tipoIcon = (tipo) => {
-            if (tipo === 'CONSULTA') return 'mdi-stethoscope';
-            if (tipo === 'EMERGENCIAS') return 'mdi-hospital-box-outline';
-            if (tipo === 'COPIAS') return 'mdi-content-copy';
-            return '';
+
+        const focusNextField = (field) => {
+            nextTick(() => {
+                let nextField = null;
+                switch (field) {
+                    case 'num':
+                        if (recordForm.value.num) {
+                           nextField = hentraInput.value;
+                        } else {
+                           showSnackbar("El campo de número de receta es obligatorio.", "warning");
+                           numRecetaInput.value.focus();
+                           return;
+                        }
+                        break;
+                    case 'hentra':
+                        if (recordForm.value.hentra) {
+                            nextField = hdigitaInput.value;
+                        } else {
+                            showSnackbar("El campo de hora de entrada es obligatorio.", "warning");
+                            hentraInput.value.focus();
+                            return;
+                        }
+                        break;
+                    case 'hdigita':
+                        if (recordForm.value.hdigita) {
+                            nextField = hacopioInput.value;
+                        } else {
+                            showSnackbar("El campo de hora de digitación es obligatorio.", "warning");
+                            hdigitaInput.value.focus();
+                            return;
+                        }
+                        break;
+                    case 'hacopio':
+                        if (recordForm.value.hacopio) {
+                            nextField = hrevisaInput.value;
+                        } else {
+                            showSnackbar("El campo de hora de acopio es obligatorio.", "warning");
+                            hacopioInput.value.focus();
+                            return;
+                        }
+                        break;
+                    case 'hrevisa':
+                        if (recordForm.value.hrevisa) {
+                            saveRecord();
+                        } else {
+                            showSnackbar("El campo de hora de revisión es obligatorio.", "warning");
+                            hrevisaInput.value.focus();
+                            return;
+                        }
+                        break;
+                }
+
+                if (nextField) {
+                    nextField.focus();
+                }
+            });
         };
 
         onMounted(() => {
-            // Lógica para hacer el diálogo arrastrable
             let isDragging = false;
             let currentX;
             let currentY;
@@ -687,7 +677,7 @@ const App = {
             });
         });
 
-        const tiempoPreparacion = computed(() => {
+        const tiempoTotal = computed(() => {
             if (recordForm.value.hentra && recordForm.value.hrevisa) {
                 const diff = calculateMinutesDifference(recordForm.value.hentra, recordForm.value.hrevisa);
                 return formatMinutesToHHMM(diff);
@@ -702,6 +692,14 @@ const App = {
             return '';
         };
 
+        // Computado para el icono del tipo de receta en el diálogo de confirmación
+        const tipoRecetaIcon = computed(() => {
+            if (recordForm.value.tipo === 'CONSULTA') return 'mdi-stethoscope';
+            if (recordForm.value.tipo === 'EMERGENCIAS') return 'mdi-hospital-box-outline';
+            if (recordForm.value.tipo === 'COPIAS') return 'mdi-content-copy';
+            return '';
+        });
+
         return {
             userEmail, lugares, selectedLugar, showModal, seleccionarLugar,
             loading, menu, userAvatar, logout,
@@ -709,17 +707,19 @@ const App = {
             confirmDialog, recordToDelete, confirmRemove, removeRecord,
             confirmSaveDialog,
             dateDialog, selectedDate, confirmDate, tipoRecetaOptions,
-            isEditMode, consultaCount, emergenciaCount, copiaCount, tipoColor,
+            isEditMode, consultaCount, emergenciaCount, copiaCount,
+            totalRecetasGeneral, promedioRecetasGeneral,
+            tipoColor, tipoRecetaIcon, // Exportar el nuevo computed
             filtroMes, filtroAno, meses,
             promedios,
             promedioMesAnterior,
-            reporteCompleto, exportToPDF,
+            reporteTrimestral, exportToPDF,
             snackbar, snackbarText, snackbarColor,
-            tiempoPreparacion,
-            numRecetaInput,
+            tiempoTotal,
+            numRecetaInput, hentraInput, hdigitaInput, hacopioInput, hrevisaInput, saveButton,
             dialogRef,
-            tipoIcon,
-            totalesGlobales
+            focusNextField,
+            tiempoPreparacion
         };
     },
     template: `
@@ -752,28 +752,21 @@ const App = {
             </v-card>
 
             <v-main class="pa-4">
-                <v-row class="mb-4">
+                <v-row class="mb-4" dense>
                     <v-col cols="12">
-                        <v-card class="pa-3 d-flex flex-column" style="background-color: #2c3e50; border-radius: 12px; color: white;">
-                            <div class="d-flex align-center justify-space-between mb-1">
+                        <v-card class="pa-4 d-flex flex-column" style="background-color: #37474f; border-radius: 12px; color: white;">
+                            <div class="d-flex align-center justify-space-between mb-2">
                                 <div class="text-h6 font-weight-bold">Total General</div>
-                                <v-icon size="36">mdi-chart-bar</v-icon>
+                                <v-icon size="36">mdi-chart-line</v-icon>
                             </div>
-                            <v-divider class="my-1" color="white"></v-divider>
-                            <div class="d-flex justify-space-around text-center">
-                                <div>
-                                    <div class="text-body-2 font-weight-light">Recetas</div>
-                                    <div class="text-h4 font-weight-bold">{{ totalesGlobales.totalRecetas }}</div>
-                                </div>
-                                <div>
-                                    <div class="text-body-2 font-weight-light">Promedio</div>
-                                    <div class="text-h4 font-weight-bold">{{ totalesGlobales.promedioGlobal }}</div>
-                                </div>
+                            <div class="d-flex justify-space-between align-end mb-1">
+                                <div class="text-h4 font-weight-bold">Recetas: {{ totalRecetasGeneral }}</div>
+                                <div class="text-h4 font-weight-bold">Promedio: {{ promedioRecetasGeneral }}</div>
                             </div>
                         </v-card>
                     </v-col>
                 </v-row>
-                
+
                 <v-row class="mb-4" dense>
                     <v-col cols="6" md="3">
                         <v-select v-model="filtroMes" :items="meses" item-title="nombre" item-value="valor" label="Mes" dense></v-select>
@@ -785,13 +778,13 @@ const App = {
                 
                 <v-row class="mb-4" dense>
                     <v-col cols="12" md="4">
-                        <v-card class="pa-3 d-flex flex-column" style="background-color: #1867c0; border-radius: 12px; color: white;">
-                            <div class="d-flex align-center justify-space-between mb-1">
-                                <div class="text-subtitle-2 font-weight-bold">CONSULTA</div>
-                                <v-icon size="30">mdi-stethoscope</v-icon>
+                        <v-card class="pa-4 d-flex flex-column" style="background-color: #1867c0; border-radius: 12px; color: white;">
+                            <div class="d-flex align-center justify-space-between mb-2">
+                                <div class="text-subtitle-1 font-weight-bold">CONSULTA</div>
+                                <v-icon size="36">mdi-stethoscope</v-icon>
                             </div>
-                            <div class="text-h5 font-weight-bold mb-1">Recetas: {{ consultaCount }}</div>
-                            <div class="text-body-2">Promedio: {{ promedios.consultaProm }}</div>
+                            <div class="text-h4 font-weight-bold mb-1">Recetas: {{ consultaCount }}</div>
+                            <div class="text-body-1">Promedio: {{ promedios.consultaProm }}</div>
                             <v-divider class="my-2" color="white"></v-divider>
                             <div class="text-caption">
                                 <div>Promedio mes anterior: {{ promedioMesAnterior.consulta }}</div>
@@ -801,13 +794,13 @@ const App = {
                         </v-card>
                     </v-col>
                     <v-col cols="12" md="4">
-                        <v-card class="pa-3 d-flex flex-column" style="background-color: #1697f6; border-radius: 12px; color: white;">
-                            <div class="d-flex align-center justify-space-between mb-1">
-                                <div class="text-subtitle-2 font-weight-bold">EMERGENCIAS</div>
-                                <v-icon size="30">mdi-hospital-box-outline</v-icon>
+                        <v-card class="pa-4 d-flex flex-column" style="background-color: #1697f6; border-radius: 12px; color: white;">
+                            <div class="d-flex align-center justify-space-between mb-2">
+                                <div class="text-subtitle-1 font-weight-bold">EMERGENCIAS</div>
+                                <v-icon size="36">mdi-hospital-box-outline</v-icon>
                             </div>
-                            <div class="text-h5 font-weight-bold mb-1">Recetas: {{ emergenciaCount }}</div>
-                            <div class="text-body-2">Promedio: {{ promedios.emergenciaProm }}</div>
+                            <div class="text-h4 font-weight-bold mb-1">Recetas: {{ emergenciaCount }}</div>
+                            <div class="text-body-1">Promedio: {{ promedios.emergenciaProm }}</div>
                             <v-divider class="my-2" color="white"></v-divider>
                             <div class="text-caption">
                                 <div>Promedio mes anterior: {{ promedioMesAnterior.emergencia }}</div>
@@ -817,13 +810,13 @@ const App = {
                         </v-card>
                     </v-col>
                     <v-col cols="12" md="4">
-                        <v-card class="pa-3 d-flex flex-column" style="background-color: #7bc6ff; border-radius: 12px; color: black;">
-                            <div class="d-flex align-center justify-space-between mb-1">
-                                <div class="text-subtitle-2 font-weight-bold">COPIAS</div>
-                                <v-icon size="30">mdi-content-copy</v-icon>
+                        <v-card class="pa-4 d-flex flex-column" style="background-color: #7bc6ff; border-radius: 12px; color: black;">
+                            <div class="d-flex align-center justify-space-between mb-2">
+                                <div class="text-subtitle-1 font-weight-bold">COPIAS</div>
+                                <v-icon size="36">mdi-content-copy</v-icon>
                             </div>
-                            <div class="text-h5 font-weight-bold mb-1">Recetas: {{ copiaCount }}</div>
-                            <div class="text-body-2">Promedio: {{ promedios.copiaProm }}</div>
+                            <div class="text-h4 font-weight-bold mb-1">Recetas: {{ copiaCount }}</div>
+                            <div class="text-body-1">Promedio: {{ promedios.copiaProm }}</div>
                             <v-divider class="my-2" color="black"></v-divider>
                             <div class="text-caption">
                                 <div>Promedio mes anterior: {{ promedioMesAnterior.copia }}</div>
@@ -897,28 +890,57 @@ const App = {
                                     <v-col cols="12">
                                         <v-text-field
                                             v-model="recordForm.num"
-                                            :ref="numRecetaInput"
+                                            ref="numRecetaInput"
                                             label="Número de Receta"
                                             type="number"
                                             :disabled="isEditMode"
                                             required
+                                            @keydown.enter="focusNextField('num')"
                                         ></v-text-field>
                                     </v-col>
                                 </v-row>
                                 <v-row dense>
                                     <v-col cols="12" md="6">
-                                        <v-text-field v-model="recordForm.hentra" label="Hora de Entrada" type="time" required></v-text-field>
+                                        <v-text-field 
+                                            v-model="recordForm.hentra"
+                                            ref="hentraInput"
+                                            label="Hora de Entrada"
+                                            type="time"
+                                            required
+                                            @keydown.enter="focusNextField('hentra')"
+                                        ></v-text-field>
                                     </v-col>
                                     <v-col cols="12" md="6">
-                                        <v-text-field v-model="recordForm.hdigita" label="Hora de Digitación" type="time" required></v-text-field>
+                                        <v-text-field 
+                                            v-model="recordForm.hdigita"
+                                            ref="hdigitaInput"
+                                            label="Hora de Digitación"
+                                            type="time"
+                                            required
+                                            @keydown.enter="focusNextField('hdigita')"
+                                        ></v-text-field>
                                     </v-col>
                                 </v-row>
                                 <v-row dense>
                                     <v-col cols="12" md="6">
-                                        <v-text-field v-model="recordForm.hacopio" label="Hora de Acopio" type="time" required></v-text-field>
+                                        <v-text-field 
+                                            v-model="recordForm.hacopio"
+                                            ref="hacopioInput"
+                                            label="Hora de Acopio"
+                                            type="time"
+                                            required
+                                            @keydown.enter="focusNextField('hacopio')"
+                                        ></v-text-field>
                                     </v-col>
                                     <v-col cols="12" md="6">
-                                        <v-text-field v-model="recordForm.hrevisa" label="Hora de Revisión" type="time" required></v-text-field>
+                                        <v-text-field 
+                                            v-model="recordForm.hrevisa"
+                                            ref="hrevisaInput"
+                                            label="Hora de Revisión"
+                                            type="time"
+                                            required
+                                            @keydown.enter="focusNextField('hrevisa')"
+                                        ></v-text-field>
                                     </v-col>
                                 </v-row>
                             </v-container>
@@ -926,31 +948,30 @@ const App = {
                         <v-card-actions>
                             <v-spacer></v-spacer>
                             <v-btn color="grey" @click="dialog = false">Cancelar</v-btn>
-                            <v-btn color="primary" @click="saveRecord">Guardar</v-btn>
+                            <v-btn color="primary" ref="saveButton" @click="saveRecord">Guardar</v-btn>
                         </v-card-actions>
                     </v-card>
                 </v-dialog>
 
                 <v-dialog v-model="confirmSaveDialog" max-width="500">
-                    <v-card class="rounded-xl">
-                        <v-card-title class="bg-primary text-white text-center py-4">
-                            <div class="d-flex align-center justify-center">
-                                <v-icon size="36" class="me-2">mdi-check-circle-outline</v-icon>
-                                <span>Confirmar Registro</span>
-                            </div>
+                    <v-card class="py-4">
+                        <v-card-title class="d-flex align-center justify-center text-blue-darken-2 pb-4">
+                            <v-icon icon="mdi-check-circle" size="30" class="me-2"></v-icon>
+                            Confirmar Registro
                         </v-card-title>
-                        <v-card-text class="text-center pa-6">
-                            <v-icon size="80" :color="tipoColor(recordForm.tipo)">{{ tipoIcon(recordForm.tipo) }}</v-icon>
-                            <p class="text-h5 font-weight-bold mt-2 mb-1">{{ recordForm.tipo }}</p>
+                        <v-card-text class="text-center">
+                            <v-icon :icon="tipoRecetaIcon" size="80" class="text-blue-darken-3 mb-2"></v-icon>
+                            <p class="text-h5 text-uppercase font-weight-bold text-blue-darken-3 mb-4">{{ recordForm.tipo }}</p>
+                            
+                            <p class="text-h6 text-center">Tiempo de preparación:</p>
+                            <p class="text-h3 text-center text-blue-darken-3 font-weight-bold mb-4">{{ tiempoPreparacion }}</p>
                             <v-divider class="my-4"></v-divider>
-                            <p class="text-h6">Tiempo de preparación:</p>
-                            <p class="text-h4 font-weight-bold">{{ tiempoPreparacion }}</p>
-                            <v-divider class="my-4"></v-divider>
-                            <p class="text-subtitle-1">¿Estás seguro de que deseas guardar este registro?</p>
+                            <p class="text-body-1 text-center">¿Estás seguro de que deseas guardar este registro?</p>
                         </v-card-text>
-                        <v-card-actions class="d-flex justify-center pa-4">
-                            <v-btn color="grey" variant="flat" @click="confirmSaveDialog = false">Cancelar</v-btn>
-                            <v-btn color="primary" variant="flat" @click="proceedSave">Guardar</v-btn>
+                        <v-card-actions>
+                            <v-spacer></v-spacer>
+                            <v-btn color="grey-darken-1" @click="confirmSaveDialog = false">CANCELAR</v-btn>
+                            <v-btn color="blue-darken-2" @click="proceedSave">GUARDAR</v-btn>
                         </v-card-actions>
                     </v-card>
                 </v-dialog>
