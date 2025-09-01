@@ -1,18 +1,5 @@
 {
-  "builds": [
-    {
-      "src": "*.html",
-      "use": "@vercel/static-build"
-    },
-    {
-      "src": "app.js",
-      "use": "@vercel/static-build"
-    },
-    {
-      "src": "firebase-config.js",
-      "use": "@vercel/static-build"
-    }
-  ],
-  "installCommand": "echo 'No install command needed'",
-  "buildCommand": "echo 'No build command needed'"
+  "installCommand": "echo 'Skipping install step'",
+  "buildCommand": "echo 'Skipping build step'",
+  "outputDirectory": "."
 }
