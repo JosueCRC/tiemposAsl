@@ -276,18 +276,36 @@ const App = {
                 }
             });
 
+            let totalGeneralRecetas = 0;
+            let totalGeneralTiempos = [];
+
             tipos.forEach(tipo => {
+                let totalTipoRecetas = 0;
+                let totalTipoTiempos = [];
+
                 Object.keys(data[tipo]).forEach(mesKey => {
                     const mesData = data[tipo][mesKey];
+                    totalTipoRecetas += mesData.cantidad;
                     if (mesData.tiempos && mesData.tiempos.length > 0) {
                         const total = mesData.tiempos.reduce((a, b) => a + b, 0);
                         mesData.promedio = formatMinutesToHHMM(Math.round(total / mesData.tiempos.length));
+                        totalTipoTiempos.push(...mesData.tiempos);
                     } else {
                         mesData.promedio = '00:00';
                     }
                     delete mesData.tiempos;
                 });
+                data[tipo].totalRecetas = totalTipoRecetas;
+                const totalPromedio = totalTipoTiempos.length > 0 ? Math.round(totalTipoTiempos.reduce((a, b) => a + b, 0) / totalTipoTiempos.length) : 0;
+                data[tipo].totalPromedio = formatMinutesToHHMM(totalPromedio);
+
+                totalGeneralRecetas += totalTipoRecetas;
+                totalGeneralTiempos.push(...totalTipoTiempos);
             });
+
+            data.totalGeneralRecetas = totalGeneralRecetas;
+            const totalGeneralPromedio = totalGeneralTiempos.length > 0 ? Math.round(totalGeneralTiempos.reduce((a, b) => a + b, 0) / totalGeneralTiempos.length) : 0;
+            data.totalGeneralPromedio = formatMinutesToHHMM(totalGeneralPromedio);
 
             return data;
         });
@@ -304,6 +322,12 @@ const App = {
             const tipos = ['CONSULTA', 'EMERGENCIAS', 'COPIAS'];
             let yPos = 20;
 
+            const tipoColorMap = {
+                'CONSULTA': [24, 103, 192], // #1867c0
+                'EMERGENCIAS': [22, 151, 246], // #1697f6
+                'COPIAS': [123, 198, 255] // #7bc6ff
+            };
+
             doc.setFontSize(16);
             doc.text("Reporte de Tiempos Trimestral", 105, yPos, { align: 'center' });
             yPos += 10;
@@ -314,12 +338,15 @@ const App = {
             tipos.forEach(tipo => {
                 const headers = [['Mes', 'Cantidad Recetas', 'Promedio (HH:MM)']];
                 const data = [];
-                const monthKeys = Object.keys(reportData[tipo]);
+                const monthKeys = Object.keys(reportData[tipo]).filter(key => key.includes('-'));
                 
                 monthKeys.forEach(monthKey => {
                     const row = reportData[tipo][monthKey];
                     data.push([row.nombreMes.toUpperCase(), row.cantidad, row.promedio]);
                 });
+                
+                data.push(['TOTAL', reportData[tipo].totalRecetas, reportData[tipo].totalPromedio]);
+                const color = tipoColorMap[tipo];
 
                 doc.text(tipo.toUpperCase(), 20, yPos);
                 yPos += 5;
@@ -332,7 +359,17 @@ const App = {
                         halign: 'center'
                     },
                     headStyles: {
-                        fillColor: [0, 100, 200]
+                        fillColor: color,
+                        textColor: [255, 255, 255]
+                    },
+                    bodyStyles: {
+                         textColor: [0, 0, 0]
+                    },
+                    didDrawCell: (data) => {
+                        if (data.row.index === data.table.body.length - 1) {
+                            doc.setFillColor(color[0], color[1], color[2]);
+                            doc.setTextColor(255, 255, 255);
+                        }
                     }
                 });
                 yPos = doc.autoTable.previous.finalY + 15;
