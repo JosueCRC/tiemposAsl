@@ -26,7 +26,7 @@ const App = {
         const showModal = ref(false);
         const loading = ref(true);
         const menu = ref(false);
-        const userAvatar = ref('https://cdn.vuetifyjs.com/images/john.jpg');
+        const userAvatar = ref('https://cdn.vuetifyjs.com/docs/images/logos/vuetify-logo-light-slim.svg');
 
         const records = ref([]);
         const recordForm = ref({});
@@ -104,6 +104,23 @@ const App = {
             snackbarColor.value = color;
             snackbar.value = true;
         };
+
+        const totalesGlobales = computed(() => {
+            const totalRecetas = records.value.length;
+            const tiemposTotales = records.value
+                .filter(r => r.hentra && r.hrevisa)
+                .map(r => calculateMinutesDifference(r.hentra, r.hrevisa))
+                .filter(diff => diff >= 0);
+
+            const promedioGlobal = tiemposTotales.length > 0
+                ? Math.round(tiemposTotales.reduce((a, b) => a + b, 0) / tiemposTotales.length)
+                : 0;
+
+            return {
+                totalRecetas,
+                promedioGlobal: formatMinutesToHHMM(promedioGlobal)
+            };
+        });
 
         const registrosFiltrados = computed(() => {
             let arr = [...records.value];
@@ -207,7 +224,7 @@ const App = {
             };
         });
 
-        const reporteTrimestral = computed(() => {
+        const reporteCompleto = computed(() => {
             const tipos = ['CONSULTA', 'EMERGENCIAS', 'COPIAS'];
             const data = { 'CONSULTA': {}, 'EMERGENCIAS': {}, 'COPIAS': {} };
             const months = [];
@@ -218,54 +235,67 @@ const App = {
 
             const getMonthName = (month) => meses.find(m => m.valor === month)?.nombre;
 
+            // Recolectar datos por mes para los últimos 3 meses
             for (let i = 0; i < 3; i++) {
                 let mes = (mesActual - i + 12) % 12;
                 let ano = anoActual;
                 if (mesActual - i < 0) {
                     ano--;
                 }
-                months.push({ mes, ano });
+                months.push({ mes, ano, label: i === 0 ? 'Mes Actual' : (i === 1 ? 'Anterior' : 'TrasAnterior') });
             }
             
+            // Inicializar la estructura de datos
             tipos.forEach(tipo => {
-                months.forEach(({ mes, ano }) => {
-                    const mesKey = `${mes}-${ano}`;
-                    data[tipo][mesKey] = { cantidad: 0, promedio: 0, nombreMes: getMonthName(mes) };
+                data[tipo].meses = {};
+                data[tipo].total = { cantidad: 0, tiempos: [] };
+                months.forEach(({ mes, ano, label }) => {
+                    data[tipo].meses[label] = { cantidad: 0, tiempos: [], nombreMes: getMonthName(mes) };
                 });
             });
 
+            // Llenar la estructura con los datos de los registros
             records.value.forEach(record => {
                 const d = parseDate(record.fecha);
                 if (!d) return;
 
                 const mes = d.getMonth();
                 const ano = d.getFullYear();
-                const mesKey = `${mes}-${ano}`;
                 const tipo = record.tipo;
 
-                if (data[tipo] && data[tipo][mesKey]) {
-                    data[tipo][mesKey].cantidad++;
-                    if (record.hentra && record.hrevisa) {
-                        const diff = calculateMinutesDifference(record.hentra, record.hrevisa);
-                        if (diff >= 0) {
-                            if (!data[tipo][mesKey].tiempos) {
-                                data[tipo][mesKey].tiempos = [];
+                if (record.hentra && record.hrevisa) {
+                    const diff = calculateMinutesDifference(record.hentra, record.hrevisa);
+                    if (diff >= 0) {
+                        // Agregar al total general
+                        data[tipo].total.tiempos.push(diff);
+                        data[tipo].total.cantidad++;
+
+                        // Agregar al mes correspondiente
+                        months.forEach(({ mes: m, ano: a, label }) => {
+                            if (mes === m && ano === a) {
+                                data[tipo].meses[label].cantidad++;
+                                data[tipo].meses[label].tiempos.push(diff);
                             }
-                            data[tipo][mesKey].tiempos.push(diff);
-                        }
+                        });
                     }
                 }
             });
 
+            // Calcular promedios finales
             tipos.forEach(tipo => {
-                Object.keys(data[tipo]).forEach(mesKey => {
-                    const mesData = data[tipo][mesKey];
-                    if (mesData.tiempos && mesData.tiempos.length > 0) {
-                        const total = mesData.tiempos.reduce((a, b) => a + b, 0);
-                        mesData.promedio = formatMinutesToHHMM(Math.round(total / mesData.tiempos.length));
-                    } else {
-                        mesData.promedio = '00:00';
-                    }
+                // Promedio del total
+                const totalData = data[tipo].total;
+                totalData.promedio = totalData.tiempos.length > 0
+                    ? formatMinutesToHHMM(Math.round(totalData.tiempos.reduce((a, b) => a + b, 0) / totalData.tiempos.length))
+                    : '00:00';
+                delete totalData.tiempos;
+
+                // Promedios por mes
+                Object.keys(data[tipo].meses).forEach(mesLabel => {
+                    const mesData = data[tipo].meses[mesLabel];
+                    mesData.promedio = mesData.tiempos.length > 0
+                        ? formatMinutesToHHMM(Math.round(mesData.tiempos.reduce((a, b) => a + b, 0) / mesData.tiempos.length))
+                        : '00:00';
                     delete mesData.tiempos;
                 });
             });
@@ -281,39 +311,88 @@ const App = {
 
             const doc = new jsPDF();
             const ebaisNombre = selectedLugar.value;
-            const reportData = reporteTrimestral.value;
-            const tipos = ['CONSULTA', 'EMERGENCIAS', 'COPIAS'];
+            const reportData = reporteCompleto.value;
+            const globalTotals = totalesGlobales.value;
+            const tipos = {
+                'CONSULTA': 'Consulta Externa',
+                'EMERGENCIAS': 'Urgencias',
+                'COPIAS': 'Subsecuentes'
+            };
+
+            const tiposColores = {
+                'CONSULTA': [24, 103, 192], // #1867c0
+                'EMERGENCIAS': [22, 151, 246], // #1697f6
+                'COPIAS': [123, 198, 255], // #7bc6ff
+            };
+
             let yPos = 20;
 
             doc.setFontSize(16);
-            doc.text("Reporte de Tiempos Trimestral", 105, yPos, { align: 'center' });
+            doc.text(`Reporte de Tiempos - ${ebaisNombre}`, 105, yPos, { align: 'center' });
             yPos += 10;
             doc.setFontSize(12);
-            doc.text(`Lugar de Atención: ${ebaisNombre}`, 105, yPos, { align: 'center' });
+            doc.text(`Generado el: ${new Date().toLocaleDateString('es-ES')}`, 105, yPos, { align: 'center' });
             yPos += 20;
 
-            tipos.forEach(tipo => {
-                const headers = [['Mes', 'Cantidad Recetas', 'Promedio (HH:MM)']];
+            // Sección de Totales Generales
+            doc.setFontSize(14);
+            doc.text('Totales Generales (Sin filtros de mes/año)', 105, yPos, { align: 'center' });
+            yPos += 5;
+            doc.autoTable({
+                startY: yPos,
+                head: [['Total Recetas', 'Promedio Global']],
+                body: [[globalTotals.totalRecetas, globalTotals.promedioGlobal]],
+                theme: 'striped',
+                styles: {
+                    fontSize: 10,
+                    halign: 'center'
+                },
+                headStyles: {
+                    fillColor: [0, 100, 200]
+                }
+            });
+            yPos = doc.autoTable.previous.finalY + 15;
+
+            // Sección de Totales por tipo de receta
+            Object.keys(tipos).forEach(tipoKey => {
+                const tipoLabel = tipos[tipoKey];
+                const headers = [['Mes', 'Cantidad Recetas', 'Promedio']];
                 const data = [];
-                const monthKeys = Object.keys(reportData[tipo]);
                 
-                monthKeys.forEach(monthKey => {
-                    const row = reportData[tipo][monthKey];
-                    data.push([row.nombreMes.toUpperCase(), row.cantidad, row.promedio]);
+                // Agregar datos de los tres meses recientes
+                const mesesData = reportData[tipoKey].meses;
+                Object.keys(mesesData).forEach(mesLabel => {
+                    const row = mesesData[mesLabel];
+                    data.push([
+                        `${mesLabel.replace('Anterior', ' Anterior').replace('Tras', 'TrasAnterior').trim()} (${row.nombreMes.toLowerCase()})`,
+                        row.cantidad,
+                        row.promedio
+                    ]);
                 });
 
-                doc.text(tipo.toUpperCase(), 20, yPos);
+                // Agregar el total
+                const totalData = reportData[tipoKey].total;
+                data.push(['Total', totalData.cantidad, totalData.promedio]);
+
+                doc.setFontSize(14);
+                doc.text(tipoLabel, 20, yPos);
                 yPos += 5;
+
                 doc.autoTable({
                     startY: yPos,
                     head: headers,
                     body: data,
+                    theme: 'striped',
                     styles: {
                         fontSize: 10,
                         halign: 'center'
                     },
                     headStyles: {
-                        fillColor: [0, 100, 200]
+                        fillColor: tiposColores[tipoKey]
+                    },
+                    didDrawPage: function (data) {
+                        // Pie de página con el número de página
+                        doc.text('Página ' + doc.internal.getNumberOfPages(), data.settings.margin.left, doc.internal.pageSize.height - 10);
                     }
                 });
                 yPos = doc.autoTable.previous.finalY + 15;
@@ -518,6 +597,13 @@ const App = {
             }
             dateDialog.value = false;
         };
+        
+        const tipoIcon = (tipo) => {
+            if (tipo === 'CONSULTA') return 'mdi-stethoscope';
+            if (tipo === 'EMERGENCIAS') return 'mdi-hospital-box-outline';
+            if (tipo === 'COPIAS') return 'mdi-content-copy';
+            return '';
+        };
 
         onMounted(() => {
             // Lógica para hacer el diálogo arrastrable
@@ -627,11 +713,13 @@ const App = {
             filtroMes, filtroAno, meses,
             promedios,
             promedioMesAnterior,
-            reporteTrimestral, exportToPDF,
+            reporteCompleto, exportToPDF,
             snackbar, snackbarText, snackbarColor,
             tiempoPreparacion,
             numRecetaInput,
-            dialogRef
+            dialogRef,
+            tipoIcon,
+            totalesGlobales
         };
     },
     template: `
@@ -664,6 +752,28 @@ const App = {
             </v-card>
 
             <v-main class="pa-4">
+                <v-row class="mb-4">
+                    <v-col cols="12">
+                        <v-card class="pa-3 d-flex flex-column" style="background-color: #2c3e50; border-radius: 12px; color: white;">
+                            <div class="d-flex align-center justify-space-between mb-1">
+                                <div class="text-h6 font-weight-bold">Total General</div>
+                                <v-icon size="36">mdi-chart-bar</v-icon>
+                            </div>
+                            <v-divider class="my-1" color="white"></v-divider>
+                            <div class="d-flex justify-space-around text-center">
+                                <div>
+                                    <div class="text-body-2 font-weight-light">Recetas</div>
+                                    <div class="text-h4 font-weight-bold">{{ totalesGlobales.totalRecetas }}</div>
+                                </div>
+                                <div>
+                                    <div class="text-body-2 font-weight-light">Promedio</div>
+                                    <div class="text-h4 font-weight-bold">{{ totalesGlobales.promedioGlobal }}</div>
+                                </div>
+                            </div>
+                        </v-card>
+                    </v-col>
+                </v-row>
+                
                 <v-row class="mb-4" dense>
                     <v-col cols="6" md="3">
                         <v-select v-model="filtroMes" :items="meses" item-title="nombre" item-value="valor" label="Mes" dense></v-select>
@@ -675,13 +785,13 @@ const App = {
                 
                 <v-row class="mb-4" dense>
                     <v-col cols="12" md="4">
-                        <v-card class="pa-4 d-flex flex-column" style="background-color: #1867c0; border-radius: 12px; color: white;">
-                            <div class="d-flex align-center justify-space-between mb-2">
-                                <div class="text-subtitle-1 font-weight-bold">CONSULTA</div>
-                                <v-icon size="36">mdi-stethoscope</v-icon>
+                        <v-card class="pa-3 d-flex flex-column" style="background-color: #1867c0; border-radius: 12px; color: white;">
+                            <div class="d-flex align-center justify-space-between mb-1">
+                                <div class="text-subtitle-2 font-weight-bold">CONSULTA</div>
+                                <v-icon size="30">mdi-stethoscope</v-icon>
                             </div>
-                            <div class="text-h4 font-weight-bold mb-1">Recetas: {{ consultaCount }}</div>
-                            <div class="text-body-1">Promedio: {{ promedios.consultaProm }}</div>
+                            <div class="text-h5 font-weight-bold mb-1">Recetas: {{ consultaCount }}</div>
+                            <div class="text-body-2">Promedio: {{ promedios.consultaProm }}</div>
                             <v-divider class="my-2" color="white"></v-divider>
                             <div class="text-caption">
                                 <div>Promedio mes anterior: {{ promedioMesAnterior.consulta }}</div>
@@ -691,13 +801,13 @@ const App = {
                         </v-card>
                     </v-col>
                     <v-col cols="12" md="4">
-                        <v-card class="pa-4 d-flex flex-column" style="background-color: #1697f6; border-radius: 12px; color: white;">
-                            <div class="d-flex align-center justify-space-between mb-2">
-                                <div class="text-subtitle-1 font-weight-bold">EMERGENCIAS</div>
-                                <v-icon size="36">mdi-hospital-box-outline</v-icon>
+                        <v-card class="pa-3 d-flex flex-column" style="background-color: #1697f6; border-radius: 12px; color: white;">
+                            <div class="d-flex align-center justify-space-between mb-1">
+                                <div class="text-subtitle-2 font-weight-bold">EMERGENCIAS</div>
+                                <v-icon size="30">mdi-hospital-box-outline</v-icon>
                             </div>
-                            <div class="text-h4 font-weight-bold mb-1">Recetas: {{ emergenciaCount }}</div>
-                            <div class="text-body-1">Promedio: {{ promedios.emergenciaProm }}</div>
+                            <div class="text-h5 font-weight-bold mb-1">Recetas: {{ emergenciaCount }}</div>
+                            <div class="text-body-2">Promedio: {{ promedios.emergenciaProm }}</div>
                             <v-divider class="my-2" color="white"></v-divider>
                             <div class="text-caption">
                                 <div>Promedio mes anterior: {{ promedioMesAnterior.emergencia }}</div>
@@ -707,13 +817,13 @@ const App = {
                         </v-card>
                     </v-col>
                     <v-col cols="12" md="4">
-                        <v-card class="pa-4 d-flex flex-column" style="background-color: #7bc6ff; border-radius: 12px; color: black;">
-                            <div class="d-flex align-center justify-space-between mb-2">
-                                <div class="text-subtitle-1 font-weight-bold">COPIAS</div>
-                                <v-icon size="36">mdi-content-copy</v-icon>
+                        <v-card class="pa-3 d-flex flex-column" style="background-color: #7bc6ff; border-radius: 12px; color: black;">
+                            <div class="d-flex align-center justify-space-between mb-1">
+                                <div class="text-subtitle-2 font-weight-bold">COPIAS</div>
+                                <v-icon size="30">mdi-content-copy</v-icon>
                             </div>
-                            <div class="text-h4 font-weight-bold mb-1">Recetas: {{ copiaCount }}</div>
-                            <div class="text-body-1">Promedio: {{ promedios.copiaProm }}</div>
+                            <div class="text-h5 font-weight-bold mb-1">Recetas: {{ copiaCount }}</div>
+                            <div class="text-body-2">Promedio: {{ promedios.copiaProm }}</div>
                             <v-divider class="my-2" color="black"></v-divider>
                             <div class="text-caption">
                                 <div>Promedio mes anterior: {{ promedioMesAnterior.copia }}</div>
@@ -822,16 +932,25 @@ const App = {
                 </v-dialog>
 
                 <v-dialog v-model="confirmSaveDialog" max-width="500">
-                    <v-card>
-                        <v-card-title class="headline">Confirmar Registro</v-card-title>
-                        <v-card-text>
-                            <p>Tiempo de preparación: <strong>{{ tiempoPreparacion }}</strong></p>
-                            <p class="mt-4">¿Desea guardar los datos?</p>
+                    <v-card class="rounded-xl">
+                        <v-card-title class="bg-primary text-white text-center py-4">
+                            <div class="d-flex align-center justify-center">
+                                <v-icon size="36" class="me-2">mdi-check-circle-outline</v-icon>
+                                <span>Confirmar Registro</span>
+                            </div>
+                        </v-card-title>
+                        <v-card-text class="text-center pa-6">
+                            <v-icon size="80" :color="tipoColor(recordForm.tipo)">{{ tipoIcon(recordForm.tipo) }}</v-icon>
+                            <p class="text-h5 font-weight-bold mt-2 mb-1">{{ recordForm.tipo }}</p>
+                            <v-divider class="my-4"></v-divider>
+                            <p class="text-h6">Tiempo de preparación:</p>
+                            <p class="text-h4 font-weight-bold">{{ tiempoPreparacion }}</p>
+                            <v-divider class="my-4"></v-divider>
+                            <p class="text-subtitle-1">¿Estás seguro de que deseas guardar este registro?</p>
                         </v-card-text>
-                        <v-card-actions>
-                            <v-spacer></v-spacer>
-                            <v-btn color="grey" @click="confirmSaveDialog = false">No</v-btn>
-                            <v-btn color="primary" @click="proceedSave">Sí</v-btn>
+                        <v-card-actions class="d-flex justify-center pa-4">
+                            <v-btn color="grey" variant="flat" @click="confirmSaveDialog = false">Cancelar</v-btn>
+                            <v-btn color="primary" variant="flat" @click="proceedSave">Guardar</v-btn>
                         </v-card-actions>
                     </v-card>
                 </v-dialog>
