@@ -111,12 +111,10 @@ const App = {
             snackbar.value = true;
         };
         
-        // Nueva propiedad para el total general de recetas (sin filtro de mes/año)
         const totalRecetasGeneral = computed(() => {
             return records.value.length;
         });
 
-        // Nueva propiedad para el promedio general (sin filtro de mes/año)
         const promedioRecetasGeneral = computed(() => {
             const tiempos = records.value.filter(r => r.hentra && r.hrevisa).map(r => calculateMinutesDifference(r.hentra, r.hrevisa));
             const total = tiempos.reduce((a, b) => a + b, 0);
@@ -632,6 +630,11 @@ const App = {
                 }
             });
         };
+        
+        const changeLugar = () => {
+             showModal.value = true;
+             menu.value = false;
+        };
 
         onMounted(() => {
             let isDragging = false;
@@ -688,16 +691,33 @@ const App = {
                 } else {
                     userEmail.value = user.email;
                     try {
-                        const userDoc = await getDoc(doc(db, "usuarios", user.email));
+                        const userDoc = await getDoc(doc(db, "usuarios", user.uid));
                         if (userDoc.exists()) {
                             const userData = userDoc.data();
                             if (userData.ebaisAutorizados && userData.ebaisAutorizados.length > 0) {
-                                if (userData.ebaisAutorizados.length === 1) {
-                                    selectedLugar.value = `${userData.ebaisAutorizados[0].Codigo} - ${userData.ebaisAutorizados[0].Ebais}`;
-                                    await cargarDatosEbais(userData.ebaisAutorizados[0].Codigo);
-                                } else {
-                                    lugares.value = userData.ebaisAutorizados.map(e => `${e.Codigo} - ${e.Ebais}`);
+                                const lugaresPromises = userData.ebaisAutorizados.map(async (item) => {
+                                    const codigo = typeof item === 'object' ? item.Codigo : item;
+                                    const lugarDocRef = doc(db, "lugares_atencion", codigo);
+                                    const docSnap = await getDoc(lugarDocRef);
+                                    if (docSnap.exists()) {
+                                        const data = docSnap.data();
+                                        return `${data.codigo} - ${data.nombre}`;
+                                    } else {
+                                        console.warn(`Documento no encontrado para el EBAIS con código: ${codigo}`);
+                                        return null;
+                                    }
+                                });
+                                const lugarDocs = await Promise.all(lugaresPromises);
+                                
+                                lugares.value = lugarDocs.filter(l => l !== null);
+                                
+                                if (lugares.value.length === 1) {
+                                    selectedLugar.value = lugares.value[0];
+                                    await cargarDatosEbais(lugares.value[0].split(" - ")[0]);
+                                } else if (lugares.value.length > 1) {
                                     showModal.value = true;
+                                } else {
+                                     showSnackbar("No se encontraron lugares de atención válidos asignados.", "warning");
                                 }
                             } else {
                                 showSnackbar("No tienes lugares de atención asignados.", "warning");
@@ -729,7 +749,6 @@ const App = {
             return '';
         };
 
-        // Computado para el icono del tipo de receta en el diálogo de confirmación
         const tipoRecetaIcon = computed(() => {
             if (recordForm.value.tipo === 'CONSULTA') return 'mdi-stethoscope';
             if (recordForm.value.tipo === 'EMERGENCIAS') return 'mdi-hospital-box-outline';
@@ -746,7 +765,7 @@ const App = {
             dateDialog, selectedDate, confirmDate, tipoRecetaOptions,
             isEditMode, consultaCount, emergenciaCount, copiaCount,
             totalRecetasGeneral, promedioRecetasGeneral,
-            tipoColor, tipoRecetaIcon, // Exportar el nuevo computed
+            tipoColor, tipoRecetaIcon,
             filtroMes, filtroAno, meses,
             promedios,
             promedioMesAnterior,
@@ -756,7 +775,8 @@ const App = {
             numRecetaInput, hentraInput, hdigitaInput, hacopioInput, hrevisaInput, saveButton,
             dialogRef,
             focusNextField,
-            tiempoPreparacion
+            tiempoPreparacion,
+            changeLugar
         };
     },
     template: `
@@ -775,7 +795,23 @@ const App = {
                                     :prepend-avatar="userAvatar"
                                     :title="selectedLugar"
                                     :subtitle="userEmail"
-                                />
+                                ></v-list-item>
+                                
+                                <v-divider></v-divider>
+                                
+                                <v-list-item
+                                    v-if="lugares.length > 1"
+                                    prepend-icon="mdi-hospital-box-outline"
+                                    title="Cambiar EBAIS"
+                                    @click="changeLugar"
+                                ></v-list-item>
+                                
+                                <v-list-item
+                                    prepend-icon="mdi-logout"
+                                    title="Cerrar sesión"
+                                    @click="logout"
+                                ></v-list-item>
+
                             </v-list>
                         </v-card>
                     </v-menu>
@@ -864,7 +900,7 @@ const App = {
                     </v-col>
                 </v-row>
 
-                <v-dialog v-model="showModal" max-width="400">
+                <v-dialog v-model="showModal" max-width="400" persistent>
                     <v-card>
                         <v-card-title>Selecciona un lugar de atención</v-card-title>
                         <v-card-text>
