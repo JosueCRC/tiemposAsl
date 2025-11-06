@@ -307,31 +307,134 @@ const App = {
 
             return data;
         });
+        
+        const getMonthName = (month) => meses.find(m => m.valor === month)?.nombre;
 
         const exportToPDF = () => {
             if (!selectedLugar.value) {
                 showSnackbar("Por favor, selecciona un lugar de atención primero.", "warning");
                 return;
             }
-
+            
             const doc = new jsPDF();
             const ebaisNombre = selectedLugar.value;
-            const reportData = reporteTrimestral.value;
-            const tipos = ['CONSULTA', 'EMERGENCIAS', 'COPIAS'];
+            const year = filtroAno.value;
+            
             let yPos = 20;
-
-            const tipoColorMap = {
-                'CONSULTA': [24, 103, 192], // #1867c0
-                'EMERGENCIAS': [22, 151, 246], // #1697f6
-                'COPIAS': [123, 198, 255] // #7bc6ff
-            };
-
+            
             doc.setFontSize(16);
-            doc.text("Reporte de Tiempos Trimestral", 105, yPos, { align: 'center' });
+            doc.text("Reporte de Tiempos", 105, yPos, { align: 'center' });
             yPos += 10;
             doc.setFontSize(12);
             doc.text(`Lugar de Atención: ${ebaisNombre}`, 105, yPos, { align: 'center' });
             yPos += 20;
+            
+            // Sección de Reporte Anual
+            doc.setFontSize(14);
+            doc.text(`Resumen Anual ${year}`, 20, yPos);
+            yPos += 5;
+            
+            const recordsFilteredByYear = records.value.filter(r => {
+                const d = parseDate(r.fecha);
+                return d && d.getFullYear() === parseInt(year);
+            });
+            
+            const yearlyTotal = recordsFilteredByYear.length;
+            const yearlyTimes = recordsFilteredByYear.filter(r => r.hentra && r.hrevisa)
+                .map(r => calculateMinutesDifference(r.hentra, r.hrevisa));
+            const yearlyAvg = yearlyTimes.length > 0 
+                ? formatMinutesToHHMM(Math.round(yearlyTimes.reduce((a, b) => a + b, 0) / yearlyTimes.length))
+                : 'N/A';
+            
+            doc.autoTable({
+                startY: yPos,
+                head: [[`Año: ${year}`, 'Total Recetas', 'Promedio Tiempo (HH:MM)']],
+                body: [['', yearlyTotal, yearlyAvg]],
+                theme: 'striped',
+                headStyles: {
+                    fillColor: [55, 71, 79],
+                    textColor: [255, 255, 255],
+                    halign: 'center',
+                    fontSize: 10
+                },
+                bodyStyles: {
+                    halign: 'center',
+                    fontSize: 9
+                },
+                styles: { cellPadding: 2, lineWidth: 0.2, lineColor: [200, 200, 200] }
+            });
+            
+            yPos = doc.autoTable.previous.finalY + 10;
+
+            // Sección de Reporte Mensual
+            doc.setFontSize(14);
+            doc.text("Desglose Mensual", 20, yPos);
+            yPos += 5;
+
+            const monthlyData = [];
+            const monthlyCountsAndTimes = {};
+            
+            recordsFilteredByYear.forEach(r => {
+                const d = parseDate(r.fecha);
+                if(d) {
+                    const mes = d.getMonth();
+                    if(!monthlyCountsAndTimes[mes]) {
+                        monthlyCountsAndTimes[mes] = { count: 0, times: [] };
+                    }
+                    monthlyCountsAndTimes[mes].count++;
+                    if(r.hentra && r.hrevisa) {
+                        const diff = calculateMinutesDifference(r.hentra, r.hrevisa);
+                        if(diff >= 0) {
+                            monthlyCountsAndTimes[mes].times.push(diff);
+                        }
+                    }
+                }
+            });
+
+            const sortedMonths = Object.keys(monthlyCountsAndTimes).sort((a, b) => a - b);
+
+            sortedMonths.forEach(mes => {
+                const mesNombre = getMonthName(parseInt(mes));
+                const totalRecetas = monthlyCountsAndTimes[mes].count;
+                const totalTiempos = monthlyCountsAndTimes[mes].times;
+                const promedioTiempo = totalTiempos.length > 0 
+                    ? formatMinutesToHHMM(Math.round(totalTiempos.reduce((a, b) => a + b, 0) / totalTiempos.length))
+                    : 'N/A';
+                monthlyData.push([mesNombre, totalRecetas, promedioTiempo]);
+            });
+
+            doc.autoTable({
+                startY: yPos,
+                head: [['Mes', 'Total Recetas', 'Promedio Tiempo (HH:MM)']],
+                body: monthlyData,
+                theme: 'striped',
+                headStyles: {
+                    fillColor: [55, 71, 79],
+                    textColor: [255, 255, 255],
+                    halign: 'center',
+                    fontSize: 10
+                },
+                bodyStyles: {
+                    halign: 'center',
+                    fontSize: 9
+                },
+                styles: { cellPadding: 2, lineWidth: 0.2, lineColor: [200, 200, 200] }
+            });
+
+            yPos = doc.autoTable.previous.finalY + 10;
+            
+            // Sección de Reporte Trimestral por Tipo de Receta
+            doc.setFontSize(14);
+            doc.text("Reporte Trimestral por Tipo de Receta", 20, yPos);
+            yPos += 5;
+            
+            const tipos = ['CONSULTA', 'EMERGENCIAS', 'COPIAS'];
+            const tipoColorMap = {
+                'CONSULTA': [24, 103, 192],
+                'EMERGENCIAS': [22, 151, 246],
+                'COPIAS': [123, 198, 255]
+            };
+            const reportData = reporteTrimestral.value;
 
             tipos.forEach(tipo => {
                 const headers = [['Mes', 'Cantidad Recetas', 'Promedio (HH:MM)']];
@@ -346,19 +449,23 @@ const App = {
                 data.push(['TOTAL', reportData[tipo].totalRecetas, reportData[tipo].totalPromedio]);
                 const color = tipoColorMap[tipo];
 
-                doc.text(tipo.toUpperCase(), 20, yPos);
+                doc.text(`${tipo.toUpperCase()}`, 20, yPos); 
                 yPos += 5;
                 doc.autoTable({
                     startY: yPos,
                     head: headers,
                     body: data,
                     styles: {
-                        fontSize: 10,
-                        halign: 'center'
+                        fontSize: 9, 
+                        halign: 'center',
+                        cellPadding: 2,
+                        lineWidth: 0.2,
+                        lineColor: [200, 200, 200]
                     },
                     headStyles: {
                         fillColor: color,
-                        textColor: [255, 255, 255]
+                        textColor: [255, 255, 255],
+                        fontSize: 10
                     },
                     bodyStyles: {
                          textColor: [0, 0, 0]
@@ -370,11 +477,18 @@ const App = {
                         }
                     }
                 });
-                yPos = doc.autoTable.previous.finalY + 15;
+                yPos = doc.autoTable.previous.finalY + 10;
             });
             
+            // Pie de página
+            const pageHeight = doc.internal.pageSize.height;
+            doc.setFontSize(8);
+            doc.setTextColor(150);
+            doc.text(`Reporte generado el ${new Date().toLocaleDateString()} a las ${new Date().toLocaleTimeString()}`, 105, pageHeight - 15, { align: 'center' });
+            doc.text(`Generado por: ${userEmail.value}`, 105, pageHeight - 10, { align: 'center' });
+            
             const codigoEbais = ebaisNombre.split(" - ")[0];
-            doc.save(`reporte-trimestral-${codigoEbais}.pdf`);
+            doc.save(`reporte-${codigoEbais}-${year}.pdf`);
         };
 
         const logout = async () => {
@@ -485,13 +599,8 @@ const App = {
 
             try {
                 if (!isEditMode.value) {
-                    const snap = await getDoc(docRef);
-                    if (snap.exists()) {
-                        showSnackbar("⚠️ Esta receta ya existe. No se puede guardar duplicada.", "warning");
-                        confirmSaveDialog.value = false;
-                        return;
-                    }
-                    await setDoc(docRef, { ...recordForm.value });
+                    // SE ELIMINÓ EL CHEQUEO DE DUPLICADOS AQUÍ. AHORA SE HACE EN checkDuplicate.
+                    await setDoc(docRef, { ...recordForm.value, createdAt: Date.now() });
                     showSnackbar("✅ Registro añadido exitosamente.", "success");
                 } else {
                     await updateDoc(docRef, { ...recordForm.value });
@@ -505,7 +614,7 @@ const App = {
             }
             const index = records.value.findIndex(r => r.num === num);
             if (index === -1) {
-                records.value.push({ ...recordForm.value });
+                records.value.push({ ...recordForm.value, createdAt: Date.now() });
             } else {
                 records.value[index] = { ...recordForm.value };
             }
@@ -578,15 +687,25 @@ const App = {
             nextTick(() => {
                 let nextField = null;
                 switch (field) {
+                    // *** INICIO DEL CASO 'num' MODIFICADO ***
                     case 'num':
+                        // Al perder el foco del campo 'num', llamamos a checkDuplicate
                         if (recordForm.value.num) {
-                           nextField = hentraInput.value;
+                             checkDuplicate(); // ESTA ES LA LLAMADA A LA VALIDACIÓN ASÍNCRONA
+                             return; 
                         } else {
                            showSnackbar("El campo de número de receta es obligatorio.", "warning");
                            numRecetaInput.value.focus();
                            return;
                         }
+                    case 'num-focus-next': // Nuevo caso: Continúa al siguiente campo después de checkDuplicate exitoso
+                        nextField = hentraInput.value;
                         break;
+                    case 'num-skip-check': // Nuevo caso: Permite continuar en modo edición
+                        nextField = hentraInput.value;
+                        break;
+                    // *** FIN DEL CASO 'num' MODIFICADO ***
+
                     case 'hentra':
                         if (recordForm.value.hentra) {
                             nextField = hdigitaInput.value;
@@ -634,6 +753,44 @@ const App = {
         const changeLugar = () => {
              showModal.value = true;
              menu.value = false;
+        };
+
+        // *** FUNCIÓN checkDuplicate - NUEVA FUNCIÓN ***
+        const checkDuplicate = async () => {
+            // Permitir edición, ya que el número de receta puede ser el mismo.
+            if (isEditMode.value) {
+                focusNextField('num-skip-check'); 
+                return;
+            };
+
+            const { num } = recordForm.value;
+
+            if (!num || !selectedLugar.value) {
+                return;
+            }
+
+            const codigoEbais = selectedLugar.value.split(" - ")[0];
+            const docRef = doc(db, "Recetas", codigoEbais, "RecetasDetalle", num);
+
+            try {
+                const snap = await getDoc(docRef);
+
+                if (snap.exists()) {
+                    showSnackbar(`⚠️ Receta N° ${num} ya existe en Firestore. Por favor, ingrese un número diferente.`, "warning");
+                    recordForm.value.num = ''; 
+                    nextTick(() => {
+                        if (numRecetaInput.value) {
+                            numRecetaInput.value.focus();
+                        }
+                    });
+                } else {
+                    focusNextField('num-focus-next'); // Continúa al siguiente campo
+                }
+            } catch (err) {
+                console.error("Error verificando duplicado:", err);
+                showSnackbar("Error al verificar duplicado en Firestore. Revisa la consola.", "error");
+                focusNextField('num-focus-next'); 
+            }
         };
 
         onMounted(() => {
@@ -776,7 +933,8 @@ const App = {
             dialogRef,
             focusNextField,
             tiempoPreparacion,
-            changeLugar
+            changeLugar,
+            checkDuplicate
         };
     },
     template: `
@@ -969,6 +1127,7 @@ const App = {
                                             :disabled="isEditMode"
                                             required
                                             @keydown.enter="focusNextField('num')"
+                                            @blur="focusNextField('num')"
                                         ></v-text-field>
                                     </v-col>
                                 </v-row>
